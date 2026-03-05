@@ -18,7 +18,7 @@ Inicialmente se entrena con **datos sintéticos**, y posteriormente se refina co
 Este repositorio sigue una **estructura modular y reproducible**, ideal para proyectos de Machine Learning.
 
 ```bash
-ia-drl-engine/
+tesis-musical-RL/
 │
 ├── env/                   # 🌱 Archivos para reproducir el entorno
 │   └── environment.yml    # Configuración (Conda/Pip)
