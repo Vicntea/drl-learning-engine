@@ -1,0 +1,22 @@
+### Obtener ejercicio (por defecto)
+GET http://localhost:8000/api/exercise
+Content-Type: application/json
+
+
+### Obtener ejercicio con parámetros
+GET http://localhost:8000/api/exercise?difficulty=2
+Content-Type: application/json
+
+
+### Otro ejemplo con tipo de ejercicio (si luego agregas ese parámetro)
+GET http://localhost:8000/api/exercise?type=practico&difficulty=3
+Content-Type: application/json
+
+### Otro ejemplo con tipo de ejercicio (si luego agregas ese parámetro)
+GET http://localhost:8000/api/exercise?type=teorico&difficulty=3
+Content-Type: application/json
+
+
+### Otro ejemplo con tipo de ejercicio (si luego agregas ese parámetro)
+GET http://localhost:8000/api/exercise?type=dictado&difficulty=3
+Content-Type: application/json

@@ -1,30 +1,5 @@
-# Environment Configuration
-.env.*
-*.env
+ia-drl-engine/data/synthetic/learning_progress/*
+!ia-drl-engine/data/synthetic/learning_progress/sint_0100/
+ia-drl-engine/data/synthetic/synthetic_data.jsonl
 
-# Dependency directory
-node_modules
-
-# Test coverage directory
-coverage
-
-# Ignore Apple macOS Desktop Services Store
-.DS_Store
-
-# Logs
-logs
-*.log
-
-# ngrok tunnel file
-config/tunnel.pid
-
-# vite build output
-dist/
-
-# extensions build output
-extensions/*/build
-
-# Node library SQLite database
-web/database.sqlite
-
-.shopify
+node_modules/
