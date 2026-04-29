@@ -2,17 +2,20 @@ import json
 import random
 import os
 import math
+import argparse
+from ia_drl_engine.src.utils.path_utils import resolve_path
+from ia_drl_engine.src.utils.skill_mapping import load_skill_mapping
 
-# --- Rutas ---
-GRAPH_PATH = '../../data/graph/nodes.json'
-OUTPUT_PATH = '../../data/synthetic/synthetic_data.jsonl'
+# --- Defaults ---
+DEFAULT_GRAPH = '@data/graph/nodes.json'
+DEFAULT_OUTPUT = '@data/synthetic/synthetic_data.csv'
 
-# --- Configuración de Simulación ---
-TOTAL_STUDENTS = 1500
-MAX_STEPS_PER_STUDENT = 160
-STEPS_PER_SESSION = 9
-MASTERY_THRESHOLD = 0.75
-MAX_SIMULATION_MASTERY = 0.6
+# --- Configuración de Simulación (defaults that can be overridden) ---
+DEFAULT_TOTAL_STUDENTS = 1500
+DEFAULT_MAX_STEPS_PER_STUDENT = 160
+DEFAULT_STEPS_PER_SESSION = 9
+DEFAULT_MASTERY_THRESHOLD = 0.75
+DEFAULT_MAX_SIMULATION_MASTERY = 0.6
 
 # --- Carga del grafo ---
 def load_musical_tree(file_path):
@@ -22,10 +25,25 @@ def load_musical_tree(file_path):
     with open(file_path, 'r') as f:
         return json.load(f)
 
-musical_tree = load_musical_tree(GRAPH_PATH)
-nodes = musical_tree.get('nodes', [])
-edges = musical_tree.get('edges', [])
-node_ids = {node['id'] for node in nodes} if nodes else set()
+def prepare_graph(graph_path):
+    graph_path = resolve_path(graph_path)
+    musical_tree = load_musical_tree(graph_path)
+    nodes = musical_tree.get('nodes', [])
+    edges = musical_tree.get('edges', [])
+    node_ids = {node['id'] for node in nodes} if nodes else set()
+    return nodes, edges, node_ids
+
+
+# --- Inicialización (compatibilidad con el código previo) ---
+try:
+    nodes, edges, node_ids = prepare_graph(DEFAULT_GRAPH)
+except Exception:
+    nodes, edges, node_ids = [], [], set()
+
+prerequisites = {node_id: [] for node_id in node_ids}
+for edge in edges:
+    if edge.get('target') in node_ids:
+        prerequisites[edge['target']].append(edge.get('source'))
 
 # --- Prerrequisitos ---
 prerequisites = {node_id: [] for node_id in node_ids}
@@ -230,46 +248,178 @@ def calculate_reward(outcome, current_proficiency, total_mastery=0.0):
 
 # --- Generación de datos sintéticos ---
 def generate_synthetic_data():
+    print("generate_synthetic_data: call prepare_graph first and pass parameters")
+    return
+
+def _generate(graph_path, output_path, total_students=DEFAULT_TOTAL_STUDENTS, max_steps_per_student=DEFAULT_MAX_STEPS_PER_STUDENT,
+              steps_per_session=DEFAULT_STEPS_PER_SESSION, mastery_threshold=DEFAULT_MASTERY_THRESHOLD,
+              max_simulation_mastery=DEFAULT_MAX_SIMULATION_MASTERY, out_format='csv', compact=False, only_values=False):
+
+    nodes, edges, node_ids = prepare_graph(graph_path)
+
     if not node_ids:
         print("No se encontraron nodos. Abortando la generación de datos.")
         return
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    
-    with open(OUTPUT_PATH, 'w') as f:
-        for i in range(TOTAL_STUDENTS):
-            profile_type = "desde_cero" if i < TOTAL_STUDENTS / 3 else "parcial" if i < 2*TOTAL_STUDENTS/3 else "avanzado"
-            student = SyntheticStudent(f"sint_{i:04d}", profile_type=profile_type)
-            session_counter = 0
+    output_path = resolve_path(output_path)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-            for j in range(MAX_STEPS_PER_STUDENT):
-                if j % STEPS_PER_SESSION == 0:
-                    session_counter += 1
-                    student.reset_session_tracking()
+    # escritura en JSONL o CSV
+    rows = []
 
-                mastered_nodes = sum(1 for n in node_ids if student.skill_proficiency[n] >= MASTERY_THRESHOLD)
-                if mastered_nodes >= len(node_ids) * MAX_SIMULATION_MASTERY:
-                    break
+    for i in range(int(total_students)):
+        profile_type = "desde_cero" if i < total_students / 3 else "parcial" if i < 2*total_students/3 else "avanzado"
+        student = SyntheticStudent(f"sint_{i:04d}", profile_type=profile_type)
+        session_counter = 0
 
-                current_state = student.get_state()
-                recommended_skill = student.choose_action()
-                outcome = simulate_outcome(recommended_skill, student)
-                total_mastery = sum(student.skill_proficiency.values()) / len(node_ids)
-                reward = calculate_reward(outcome, current_state["skill_proficiency"].get(recommended_skill, 0.0), total_mastery)
-                student.update_state(recommended_skill, outcome)
+        for j in range(int(max_steps_per_student)):
+            if j % int(steps_per_session) == 0:
+                session_counter += 1
+                student.reset_session_tracking()
 
-                f.write(json.dumps({
-                    "student_id": student.student_id,
-                    "profile_type": student.profile_type,
-                    "step_number": j + 1,
-                    "session_id": f"ses_{student.student_id}_{session_counter}",
-                    "state": current_state,
-                    "action": {"recommended_skill_id": recommended_skill},
-                    "outcome": outcome,
-                    "reward": reward
-                }) + "\n")
-                
-    print(f"Datos sintéticos generados en {OUTPUT_PATH}. Total de {TOTAL_STUDENTS} estudiantes simulados.")
+            mastered_nodes = sum(1 for n in node_ids if student.skill_proficiency[n] >= mastery_threshold)
+            if mastered_nodes >= len(node_ids) * max_simulation_mastery:
+                break
 
-if __name__ == "__main__":
-    generate_synthetic_data()
+            current_state = student.get_state()
+            recommended_skill = student.choose_action()
+            outcome = simulate_outcome(recommended_skill, student)
+            total_mastery = sum(student.skill_proficiency.values()) / len(node_ids)
+            reward = calculate_reward(outcome, current_state["skill_proficiency"].get(recommended_skill, 0.0), total_mastery)
+            student.update_state(recommended_skill, outcome)
+
+            entry = {
+                "student_id": student.student_id,
+                "profile_type": student.profile_type,
+                "step_number": j + 1,
+                "session_id": f"ses_{student.student_id}_{session_counter}",
+                "state": current_state,
+                "action": {"recommended_skill_id": recommended_skill},
+                "outcome": outcome,
+                "reward": reward
+            }
+
+            rows.append(entry)
+
+    # Output handling
+    if out_format == 'jsonl':
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for entry in rows:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        print(f"Datos sintéticos (jsonl) generados en {output_path}. Total de {len(rows)} pasos generados.")
+
+    elif out_format == 'csv':
+        import csv
+        # Use skill mapping to get consistent column order
+        try:
+            skill_to_idx, idx_to_skill, ordered_skills = load_skill_mapping()
+        except Exception:
+            ordered_skills = []
+
+        # CSV header: fixed columns + either compact column or one column per skill in ordered_skills
+        fixed_cols = [
+            'student_id', 'profile_type', 'step_number', 'session_id',
+            'recommended_skill_id', 'outcome_success', 'outcome_score', 'outcome_time_spent', 'reward'
+        ]
+
+        if compact:
+            header = fixed_cols + ['skills_compact']
+        else:
+            header = fixed_cols + ordered_skills
+
+        with open(output_path, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+
+            if compact:
+                # compact mode: encode skill proficiencies as zero-padded integers (0-100) and concatenate
+                for entry in rows:
+                    prof = entry['state'].get('skill_proficiency', {})
+                    skill_values = [int(round(prof.get(s, 0) * 100)) for s in ordered_skills]
+                    # zero-pad to 3 digits and concatenate
+                    compact_str = ''.join(f"{v:03d}" for v in skill_values)
+
+                    # normalize types if only_values requested
+                    success_val = int(entry['outcome']['success']) if only_values else entry['outcome']['success']
+                    score_val = f"{entry['outcome']['score']:.4f}" if only_values else entry['outcome']['score']
+                    time_val = int(entry['outcome']['time_spent']) if only_values else entry['outcome']['time_spent']
+                    reward_val = f"{entry['reward']:.4f}" if only_values else entry['reward']
+
+                    row = [
+                        entry['student_id'],
+                        entry['profile_type'],
+                        entry['step_number'],
+                        entry['session_id'],
+                        entry['action']['recommended_skill_id'],
+                        success_val,
+                        score_val,
+                        time_val,
+                        reward_val,
+                        compact_str
+                    ]
+
+                    writer.writerow(row)
+
+            else:
+                for entry in rows:
+                    prof = entry['state'].get('skill_proficiency', {})
+                    if only_values:
+                        skill_values = [int(round(prof.get(s, 0) * 100)) for s in ordered_skills]
+                    else:
+                        skill_values = [prof.get(s, 0) for s in ordered_skills]
+
+                    success_val = int(entry['outcome']['success']) if only_values else entry['outcome']['success']
+                    score_val = f"{entry['outcome']['score']:.4f}" if only_values else entry['outcome']['score']
+                    time_val = int(entry['outcome']['time_spent']) if only_values else entry['outcome']['time_spent']
+                    reward_val = f"{entry['reward']:.4f}" if only_values else entry['reward']
+
+                    row = [
+                        entry['student_id'],
+                        entry['profile_type'],
+                        entry['step_number'],
+                        entry['session_id'],
+                        entry['action']['recommended_skill_id'],
+                        success_val,
+                        score_val,
+                        time_val,
+                        reward_val
+                    ] + skill_values
+
+                    writer.writerow(row)
+
+        print(f"Datos sintéticos (csv) generados en {output_path}. Filas: {len(rows)}")
+    else:
+        print(f"Formato de salida desconocido: {out_format}. Usa 'jsonl' o 'csv'.")
+
+
+def parse_args_and_run():
+    parser = argparse.ArgumentParser(description='Generador de datos sintéticos (JSONL o CSV)')
+    parser.add_argument('--graph', default=DEFAULT_GRAPH, help='Ruta al grafo (usar @ para paths relativos al paquete)')
+    parser.add_argument('--output', default=DEFAULT_OUTPUT, help='Ruta de salida (usar @ para paths relativos)')
+    parser.add_argument('--format', choices=['jsonl', 'csv'], default='csv', help='Formato de salida')
+    parser.add_argument('--n_students', type=int, default=DEFAULT_TOTAL_STUDENTS, help='Total de estudiantes a simular')
+    parser.add_argument('--max_steps', type=int, default=DEFAULT_MAX_STEPS_PER_STUDENT, help='Max pasos por estudiante')
+    parser.add_argument('--steps_per_session', type=int, default=DEFAULT_STEPS_PER_SESSION)
+    parser.add_argument('--mastery_threshold', type=float, default=DEFAULT_MASTERY_THRESHOLD)
+    parser.add_argument('--max_simulation_mastery', type=float, default=DEFAULT_MAX_SIMULATION_MASTERY)
+
+    parser.add_argument('--only-values', action='store_true', help='Si se especifica, las filas contendrán solo valores (sin bloques adicionales)')
+
+    args = parser.parse_args()
+
+    _generate(
+        graph_path=args.graph,
+        output_path=args.output,
+        total_students=args.n_students,
+        max_steps_per_student=args.max_steps,
+        steps_per_session=args.steps_per_session,
+        mastery_threshold=args.mastery_threshold,
+        max_simulation_mastery=args.max_simulation_mastery,
+        out_format=args.format,
+        compact=getattr(args, 'compact', False),
+        only_values=getattr(args, 'only_values', False)
+    )
+
+
+if __name__ == '__main__':
+    parse_args_and_run()
