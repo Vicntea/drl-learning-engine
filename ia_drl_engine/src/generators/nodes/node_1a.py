@@ -1,5 +1,6 @@
 # src/generators/nodes/node_1a.py
 
+import os
 import random
 from typing import Dict, Any, List
 import json
@@ -160,26 +161,35 @@ def _generate_1a_theory(difficulty: int) -> Dict[str, Any]:
     random.shuffle(options)
     correct_index = options.index(correct)
 
-    # Build VexFlow notes depending on exercise kind
-    if exercise_kind in ("suma", "compas", "compare_values"):
+    # Decide whether this exercise needs a rendered score (notes)
+    # By default only 'suma' and 'compas' show notes, but explicitly
+    # ensure definition/meaning questions (e.g., about silencios) never
+    # include a rendered score even if detected elsewhere.
+    include_notes = exercise_kind in ("suma", "compas")
+    # If the prompt mentions a rest/"silencio" or it's the rest_meaning kind,
+    # never attach notes (safety guard to prevent unwanted partitura).
+    if exercise_kind == "rest_meaning" or (isinstance(question, str) and "silencio" in question.lower()):
+        include_notes = False
+
+    notes = None
+    if include_notes:
         # show one or two notes representing the figures
-        notes = []
         if exercise_kind == "suma":
             # represent two quarter/eighth/half notes
             notes = generate_vexflow_notes([FIGURES_BASIC.get(fig1, 'q'), FIGURES_BASIC.get(fig2, 'q')])
         else:
             notes = generate_vexflow_notes([FIGURES_BASIC.get(figure, 'q')])
-    else:
-        # simple example note for identification/equivalence
-        notes = [{"keys": ["c/4"], "duration": "q"}]
 
+    # Build data but only include notes when relevant. Some conceptual questions don't
+    # need a rendered score so we keep the payload lighter (no data['notes']).
     data = {
-        "notes": notes,
         "timeSignature": TIME_SIGNATURE,
         "clef": "treble",
         "alternatives": options,
         "correct_index": correct_index
     }
+    if notes is not None:
+        data["notes"] = notes
 
     return {
         "node": "1A",
@@ -274,7 +284,77 @@ def generate_1a_exercise(difficulty: int, last_type: str = None) -> Dict[str, An
     :return: dict con el ejercicio generado.
     """
 
-    # Siempre generamos ejercicios teóricos (multiple-choice) para 1A
+    # Prefer question-bank entries (randomized) and fall back to procedural generators
+    def _load_question_bank(node_name: str = "node_1a") -> List[Dict[str, Any]]:
+        bank_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "question_banks", f"{node_name}_questions.json"))
+        try:
+            with open(bank_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and "questions" in data and isinstance(data["questions"], list):
+                return data["questions"]
+        except Exception:
+            return []
+        return []
+
+    bank = _load_question_bank("node_1a")
+    # filter by difficulty if the bank provides it
+    candidates = [q for q in bank if int(q.get("difficulty", difficulty)) == difficulty] if bank else []
+    if candidates:
+        q = random.choice(candidates)
+        # build result from bank entry; be forgiving with field names
+        prompt = q.get("exercise") or q.get("question") or q.get("prompt") or ""
+        qtype = q.get("type") or q.get("presentation_type") or "teorico"
+        alternatives = q.get("alternatives") or q.get("options") or []
+        # shuffle alternatives when present and compute correct_index
+        if alternatives:
+            # accept several possible keys for the correct answer
+            correct_val = q.get("correct") or q.get("expected_answer") or q.get("answer")
+            # shuffle then try to locate the correct value robustly (compare str forms)
+            random.shuffle(alternatives)
+            correct_index = 0
+            if correct_val is not None:
+                cstr = str(correct_val)
+                for idx, alt in enumerate(alternatives):
+                    try:
+                        if str(alt) == cstr:
+                            correct_index = idx
+                            break
+                    except Exception:
+                        continue
+            else:
+                # fallback to provided index or 0
+                provided_idx = q.get("correct_index")
+                try:
+                    correct_index = int(provided_idx) if provided_idx is not None else 0
+                    if correct_index >= len(alternatives):
+                        correct_index = 0
+                except Exception:
+                    correct_index = 0
+        else:
+            alternatives = []
+            correct_index = q.get("correct_index", 0)
+
+        data = q.get("data", {}) or {}
+        if alternatives:
+            data["alternatives"] = alternatives
+            data["correct_index"] = correct_index
+        # include notes if present in bank entry
+        if "notes" in q and q.get("notes"):
+            data["notes"] = q.get("notes")
+
+        return {
+            "node": "1A",
+            "type": qtype,
+            "difficulty": difficulty,
+            "exercise": prompt,
+            "expected_answer": q.get("expected_answer") or q.get("correct") or q.get("answer") or None,
+            "presentation_format": q.get("presentation_format") or ("multiple_choice" if alternatives else "open"),
+            "data": data,
+        }
+
+    # Fallback: siempre generamos ejercicios teóricos (multiple-choice) para 1A
     return _generate_1a_theory(difficulty)
 
 # Función para generar un MIDI de prueba (reemplaza con tu lógica real)
@@ -323,25 +403,32 @@ if __name__ == "__main__":
         else:
             exercise = generate_1a_exercise(difficulty)
 
-        rhythm_pattern = (
-            exercise.get("rhythm_sequence", [])
-            if exercise["type"] in ["practico", "dictado"]
-            else _generate_1a_rhythm_pattern(difficulty)
-        )
-
-        notes = generate_vexflow_notes(rhythm_pattern)
+        # For practical/dictation exercises we generate the rhythm pattern and notes.
+        # For theoretical exercises, only include rendered notes in the presentation
+        # if the exercise data already contains them (some theoretical kinds do).
+        if exercise["type"] in ["practico", "dictado"]:
+            rhythm_pattern = exercise.get("rhythm_sequence", [])
+            notes = generate_vexflow_notes(rhythm_pattern)
+        else:
+            # theory: use any notes already included in exercise['data'], otherwise none
+            rhythm_pattern = exercise.get("rhythm_sequence", [])
+            notes = exercise.get("data", {}).get("notes", [])
         midi_data = generate_dummy_midi()
         midi_data_base64 = base64.b64encode(midi_data).decode("utf-8")
+
+        presentation = {
+            "midiData": midi_data_base64,
+        }
+        # Only include notes/rhythmPattern in the presentation if we actually have them
+        if notes:
+            presentation["notes"] = notes
+            presentation["rhythmPattern"] = rhythm_pattern
 
         response = {
             "status": "success",
             "data": {
                 "exercise": exercise,
-                "presentation": {
-                    "midiData": midi_data_base64,
-                    "notes": notes,
-                    "rhythmPattern": rhythm_pattern
-                }
+                "presentation": presentation
             }
         }
 

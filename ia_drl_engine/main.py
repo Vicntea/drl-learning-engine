@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from ia_drl_engine.middleware import register_logging_middleware
 
 """
 Nota: originalmente importábamos `setup_endpoints` desde `ia_drl_engine.endpoints`.
@@ -9,6 +10,8 @@ from ia_drl_engine.endpoints_integrated import setup_endpoints, NextExerciseRequ
 
 app = FastAPI()
 
+# Register logging middleware (logs method, path and body)
+register_logging_middleware(app)
 # =========================================
 # ROOT
 # =========================================

@@ -1,5 +1,7 @@
+import os
 import random
 from typing import Dict, Any, List
+import json
 
 def generate_vexflow_notes_scale(scale_type: str, root: str = "c/4", direction: str = "asc") -> List[Dict[str, str]]:
     # Generaliza para cualquier raíz, tipo y dirección
@@ -46,6 +48,74 @@ def generate_vexflow_notes_scale(scale_type: str, root: str = "c/4", direction: 
     ]
 
 def generate_2b_exercise(difficulty: int) -> Dict[str, Any]:
+    # Prefer bank first
+    def _load_question_bank(node_name: str = "node_2b") -> List[Dict[str, Any]]:
+        bank_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "question_banks", f"{node_name}_questions.json"))
+        try:
+            with open(bank_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and "questions" in data and isinstance(data["questions"], list):
+                return data["questions"]
+        except Exception:
+            return []
+        return []
+
+    bank = _load_question_bank("node_2b")
+    candidates = [q for q in bank if int(q.get("difficulty", difficulty)) == difficulty] if bank else []
+    if candidates:
+        q = random.choice(candidates)
+        # accept multiple possible field names from question banks
+        prompt = q.get("exercise") or q.get("question") or q.get("prompt") or ""
+        alternatives = q.get("alternatives") or q.get("options") or []
+        if alternatives:
+            correct = q.get("correct") or q.get("expected_answer") or q.get("answer")
+            # Shuffle alternatives but preserve ability to find the correct index
+            random.shuffle(alternatives)
+            correct_index = 0
+            if correct is not None:
+                cstr = str(correct)
+                for idx, alt in enumerate(alternatives):
+                    try:
+                        if str(alt) == cstr:
+                            correct_index = idx
+                            break
+                    except Exception:
+                        continue
+            else:
+                correct_index = q.get("correct_index", 0)
+        else:
+            alternatives = []
+            correct_index = q.get("correct_index", 0)
+        data = q.get("data", {}) or {}
+        if alternatives:
+            data["alternatives"] = alternatives
+            data["correct_index"] = correct_index
+
+        out_prompt = prompt or q.get("question") or q.get("exercise") or "Selecciona la alternativa correcta."
+        out_expected = q.get("expected_answer") or q.get("correct") or q.get("answer")
+        # derive expected from alternatives if needed
+        if (out_expected is None or out_expected == "") and alternatives:
+            try:
+                ci = int(correct_index)
+            except Exception:
+                ci = 0
+            if 0 <= ci < len(alternatives):
+                out_expected = alternatives[ci]
+            else:
+                out_expected = alternatives[0]
+
+        return {
+            "node": "2B",
+            "type": q.get("type", "teorico"),
+            "difficulty": difficulty,
+            "exercise": out_prompt,
+            "expected_answer": out_expected,
+            "presentation_format": q.get("presentation_format", "multiple_choice"),
+            "data": data
+        }
+
     # Dificultad ajusta tipo, raíz y dirección
     if difficulty == 1:
         scale_type = "mayor"
@@ -91,10 +161,13 @@ def generate_2b_exercise(difficulty: int) -> Dict[str, Any]:
         alternatives = ["2-2-1-2-2-2-1", "2-1-2-2-1-2-2", "1-2-2-2-1-2-2", "2-2-2-1-2-2-1"]
         correct = alternatives[0]
 
+    # decide whether to include a rendered example (notes) for this question
+    include_notes = kind == "identificacion"
+
     random.shuffle(alternatives)
     correct_index = alternatives.index(correct)
 
-    return {
+    result = {
         "node": "2B",
         "type": "teorico",
         "difficulty": difficulty,
@@ -102,10 +175,14 @@ def generate_2b_exercise(difficulty: int) -> Dict[str, Any]:
         "expected_answer": correct,
         "presentation_format": "multiple_choice",
         "data": {
-            "notes": notes,
             "timeSignature": "4/4",
             "clef": "treble",
             "alternatives": alternatives,
             "correct_index": correct_index,
         },
     }
+
+    if include_notes:
+        result["data"]["notes"] = notes
+
+    return result

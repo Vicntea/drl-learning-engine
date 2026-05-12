@@ -260,6 +260,7 @@ def calculate_session_reward(events_data: List[SessionEvent]) -> Dict:
     }
 
 
+
 def recommend_next_nodes(
     proficiencies: Dict[str, float], count: int = 3
 ) -> List[str]:

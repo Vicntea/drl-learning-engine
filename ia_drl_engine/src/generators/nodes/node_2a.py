@@ -1,5 +1,7 @@
+import os
 import random
 from typing import Dict, Any, List
+import json
 
 def generate_vexflow_notes_interval(interval: int, root: str = "c/4", direction: str = "asc") -> List[Dict[str, str]]:
     # Generaliza para cualquier raíz y dirección
@@ -35,6 +37,76 @@ def generate_vexflow_notes_interval(interval: int, root: str = "c/4", direction:
     ]
 
 def generate_2a_exercise(difficulty: int) -> Dict[str, Any]:
+    # Prefer question bank entries (randomized) and fallback to procedural
+    def _load_question_bank(node_name: str = "node_2a") -> List[Dict[str, Any]]:
+        bank_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "question_banks", f"{node_name}_questions.json"))
+        try:
+            with open(bank_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and "questions" in data and isinstance(data["questions"], list):
+                return data["questions"]
+        except Exception:
+            return []
+        return []
+
+    bank = _load_question_bank("node_2a")
+    candidates = [q for q in bank if int(q.get("difficulty", difficulty)) == difficulty] if bank else []
+    if candidates:
+        q = random.choice(candidates)
+        # accept multiple possible field names from question banks
+        prompt = q.get("exercise") or q.get("question") or q.get("prompt") or ""
+        alternatives = q.get("alternatives") or q.get("options") or []
+        if alternatives:
+            correct = q.get("correct") or q.get("expected_answer") or q.get("answer")
+            random.shuffle(alternatives)
+            correct_index = 0
+            if correct is not None:
+                cstr = str(correct)
+                for idx, alt in enumerate(alternatives):
+                    try:
+                        if str(alt) == cstr:
+                            correct_index = idx
+                            break
+                    except Exception:
+                        continue
+            else:
+                correct_index = q.get("correct_index", 0)
+        else:
+            alternatives = []
+            correct_index = q.get("correct_index", 0)
+        data = q.get("data", {}) or {}
+        if alternatives:
+            data["alternatives"] = alternatives
+            data["correct_index"] = correct_index
+
+        # Ensure we always return a non-empty prompt and an expected_answer.
+        # Some banks may provide alternatives but omit a textual prompt or the
+        # explicit expected_answer; in that case derive them safely.
+        out_prompt = prompt or q.get("prompt") or q.get("question") or q.get("exercise") or "Selecciona la alternativa correcta."
+        out_expected = q.get("expected_answer") or q.get("correct") or q.get("answer")
+        if (out_expected is None or out_expected == "") and alternatives:
+            # derive from correct_index (guard bounds)
+            try:
+                ci = int(correct_index)
+            except Exception:
+                ci = 0
+            if 0 <= ci < len(alternatives):
+                out_expected = alternatives[ci]
+            else:
+                out_expected = alternatives[0]
+
+        return {
+            "node": "2A",
+            "type": q.get("type", "teorico"),
+            "difficulty": difficulty,
+            "exercise": out_prompt,
+            "expected_answer": out_expected,
+            "presentation_format": q.get("presentation_format", "multiple_choice"),
+            "data": data
+        }
+
     # Dificultad ajusta el rango, raíz y dirección
     if difficulty == 1:
         interval = random.randint(1, 3)
@@ -59,11 +131,11 @@ def generate_2a_exercise(difficulty: int) -> Dict[str, Any]:
 
     if kind == "identificacion":
         prompt = f"¿Qué intervalo {'ascendente' if direction=='asc' else 'descendente'} hay entre las dos notas? (Raíz: {root.upper()})"
-        candidates = [interval, max(1, interval-1), interval+1, interval+2]
-        while len(candidates) < 4:
-            val = random.randint(1, max(8, interval+3))
-            if val not in candidates:
-                candidates.append(val)
+        candidates = [interval, max(1, interval-1), interval+1]
+        # add one random distractor further away
+        extra = random.randint(1, max(12, interval+5))
+        if extra not in candidates:
+            candidates.append(extra)
         random.shuffle(candidates)
         alternatives = [str(c) for c in candidates[:4]]
         correct = str(interval)
@@ -87,10 +159,14 @@ def generate_2a_exercise(difficulty: int) -> Dict[str, Any]:
         ]
         correct = alternatives[0]
 
+    # Decide if we should include a rendered score for this exercise
+    include_notes = kind in ("identificacion", "inversion")
+
+    # Ensure alternatives are shuffled and compute correct index
     random.shuffle(alternatives)
     correct_index = alternatives.index(correct)
 
-    return {
+    result = {
         "node": "2A",
         "type": "teorico",
         "difficulty": difficulty,
@@ -98,10 +174,15 @@ def generate_2a_exercise(difficulty: int) -> Dict[str, Any]:
         "expected_answer": correct,
         "presentation_format": "multiple_choice",
         "data": {
-            "notes": notes,
             "timeSignature": "4/4",
             "clef": "treble",
             "alternatives": alternatives,
             "correct_index": correct_index,
         },
     }
+
+    if include_notes:
+        # attach the pre-generated notes to the payload
+        result["data"]["notes"] = notes
+
+    return result
