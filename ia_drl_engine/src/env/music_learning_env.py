@@ -1,125 +1,112 @@
 import gymnasium as gym
 from gymnasium import spaces
-import numpy as np
-import json
-import os
-from ia_drl_engine.src.utils.path_utils import resolve_path
 
+# --- DRL MusicLearningEnv with UserState integration ---
+from ia_drl_engine.state_model import UserState
+from ia_drl_engine.exercise_schema import Exercise
 
 class MusicLearningEnv(gym.Env):
     """
-    Entorno Gymnasium para la progresión de un estudiante en un grafo de aprendizaje musical.
+    DRL environment for music learning with structured user state and exercise catalog.
     """
-
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, nodes_path=None, max_steps=50):
+    def __init__(self, exercise_catalog, max_steps=50):
         super().__init__()
-
-        # 📁 Resolver path
-        if nodes_path is None:
-            nodes_path = resolve_path("@data/graph/nodes.json")
-
-        if not os.path.exists(nodes_path):
-            raise FileNotFoundError(f"No se encontró el archivo: {nodes_path}")
-
-        # 📊 Cargar grafo
-        with open(nodes_path, "r") as f:
-            data = json.load(f)
-
-        self.nodes = data["nodes"]
-        self.edges = data["edges"]
-
-        self.node_ids = [n["id"] for n in self.nodes]
+        self.exercise_catalog = exercise_catalog
+        self.node_ids = list({ex.node for ex in exercise_catalog})
         self.n_nodes = len(self.node_ids)
-
-        # 🔗 Lista de adyacencia
-        self.adj = {nid: [] for nid in self.node_ids}
-        for edge in self.edges:
-            self.adj[edge["source"]].append(edge["target"])
-
-        # 🎯 Espacios
-        self.observation_space = spaces.MultiBinary(self.n_nodes)
-        self.action_space = spaces.Discrete(self.n_nodes)
-
-        # ⏱️ Control de episodio
+        self.node_prereqs = {ex.node: ex.prerequisites for ex in exercise_catalog}
         self.max_steps = max_steps
         self.current_step = 0
+        self.state = None
+        self.last_exercise_id = None
 
-        # Estado
-        self.current_node_idx = 0
-        self.visited = set()
-
-    # 🔄 RESET (Gymnasium API)
-    def reset(self, seed=None, options=None):
+    def reset(self, initial_state=None, seed=None, options=None):
         super().reset(seed=seed)
-
-        self.current_node_idx = 0
-        self.visited = {self.current_node_idx}
         self.current_step = 0
-
+        if initial_state is not None:
+            self.state = initial_state
+        else:
+            self.state = UserState(
+                knowledge=dict.fromkeys(self.node_ids, 0.0),
+                accuracy=dict.fromkeys(self.node_ids, 0.0),
+                attempts=dict.fromkeys(self.node_ids, 0),
+                streak=0,
+                last_exercise_difficulty=1,
+                time_since_last_practice=0.0,
+                recent_performance_trend={nid: [] for nid in self.node_ids}
+            )
+        self.last_exercise_id = None
         return self._get_obs(), {}
 
-    # ▶️ STEP (Gymnasium API)
-    def step(self, action):
+    def step(self, action, correct, response_time):
         self.current_step += 1
-
-        if not self.action_space.contains(action):
+        if not (0 <= action < len(self.exercise_catalog)):
             raise ValueError("Acción fuera de rango")
-
-        current_node_id = self.node_ids[self.current_node_idx]
-        next_node_id = self.node_ids[action]
-
-        valid_next = next_node_id in self.adj[current_node_id]
-
-        # 🎯 Reward shaping (clave para aprendizaje)
-        if valid_next:
-            reward = 1.0
-
-            # Bonus por nodo no visitado
-            if action not in self.visited:
-                reward += 0.5
-
-            self.current_node_idx = action
-            self.visited.add(action)
-
+        exercise = self.exercise_catalog[action]
+        node = exercise.node
+        # Prerequisite enforcement
+        if exercise.prerequisites:
+            if not all(self.state.knowledge.get(pr, 0.0) > 0.6 for pr in exercise.prerequisites):
+                return self._get_obs(), -1.0, False, False, {"reason": "Prerequisites not met"}
+        # No repeated exercises
+        if exercise.exercise_id == self.last_exercise_id:
+            return self._get_obs(), -0.5, False, False, {"reason": "Repeated exercise"}
+        # Update attempts
+        self.state.attempts[node] += 1
+        prev_acc = self.state.accuracy[node]
+        self.state.accuracy[node] = (
+            (prev_acc * (self.state.attempts[node] - 1) + int(correct)) / self.state.attempts[node]
+        )
+        # Update knowledge
+        if correct:
+            self.state.knowledge[node] = min(1.0, self.state.knowledge[node] + 0.05)
+            self.state.streak += 1
         else:
-            reward = -1.0  # penalización
+            self.state.knowledge[node] = max(0.0, self.state.knowledge[node] - 0.02)
+            self.state.streak = 0
+        # Update last exercise difficulty
+        self.state.last_exercise_difficulty = exercise.difficulty
+        # Update recent performance trend
+        self.state.recent_performance_trend[node].append(int(correct))
+        if len(self.state.recent_performance_trend[node]) > 10:
+            self.state.recent_performance_trend[node].pop(0)
+        # Update time since last practice
+        self.state.time_since_last_practice = 0
+        self.last_exercise_id = exercise.exercise_id
+        # Reward
+        reward = self.calculate_reward(correct, node, exercise.difficulty)
+        # Termination
+        done = self.current_step >= self.max_steps or all(v >= 0.95 for v in self.state.knowledge.values())
+        info = {"exercise_id": exercise.exercise_id, "node": node}
+        return self._get_obs(), reward, done, False, info
 
-        # 🏁 Condiciones de término
-        no_more_moves = len(self.adj[self.node_ids[self.current_node_idx]]) == 0
+    def calculate_reward(self, correct, node, difficulty):
+        trend = self.state.recent_performance_trend[node]
+        prev = trend[-2:] if len(trend) > 1 else [0, 0]
+        improvement = int(correct) - prev[-1] if prev else 0
+        ideal_difficulty = int(self.state.knowledge[node] * 10)
+        diff_gap = abs(difficulty - ideal_difficulty)
+        # Exploración: bonifica nodos poco practicados y ejercicios nuevos
+        nodo_poco_practicado = self.state.attempts[node] < 3
+        ejercicio_nuevo = len(trend) <= 1
+        reward = 1.0 * int(correct)
+        if improvement:
+            reward += 0.5
+        if diff_gap <= 1:
+            reward += 0.5  # Explota el nivel óptimo
+        elif diff_gap > 2:
+            reward -= 0.3  # Penaliza saltos grandes
+        if nodo_poco_practicado:
+            reward += 0.2  # Bonifica explorar nodos débiles
+        if ejercicio_nuevo:
+            reward += 0.1  # Bonifica variedad
+        return reward
 
-        terminated = no_more_moves
-        truncated = self.current_step >= self.max_steps
-
-        return self._get_obs(), reward, terminated, truncated, {}
-
-    # 👁️ Render
     def render(self):
-        print(f"Nodo actual: {self.node_ids[self.current_node_idx]}")
-        print(f"Visitados: {[self.node_ids[i] for i in self.visited]}")
-        print(f"Paso: {self.current_step}")
+        print(f"Current state: {self.state}")
+        print(f"Step: {self.current_step}")
 
-    # 🧠 Observación
     def _get_obs(self):
-        obs = np.zeros(self.n_nodes, dtype=np.int8)
-        obs[self.current_node_idx] = 1
-        return obs
-
-
-# 🧪 Test standalone
-if __name__ == "__main__":
-    env = MusicLearningEnv()
-
-    obs, info = env.reset()
-    terminated = False
-    truncated = False
-    total_reward = 0
-
-    while not (terminated or truncated):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        env.render()
-        total_reward += reward
-
-    print(f"Episodio terminado. Recompensa total: {total_reward}")
+        return self.state
