@@ -1,0 +1,38 @@
+# Render YAML to deploy the DRL Learning Engine using the Dockerfile in the repo root
+# Customize: repo, branch and MODEL_URL if you host the model externally.
+
+services:
+  - type: web
+    name: drl-learning-engine
+    env: docker
+    branch: dev
+    region: oregon
+    dockerfilePath: Dockerfile
+    # For Docker-based services Render will build the image using the Dockerfile.
+    # No buildCommand/startCommand needed unless you want to override the image's CMD.
+    autoDeploy: true
+    plan: free
+    # Health check - use the lightweight endpoint we added that does not force model load
+    healthCheckPath: /health
+    healthCheckIntervalSeconds: 30
+    envVars:
+      - key: MODEL_PATH
+        value: ia_drl_engine/models/ppo_music_learning.zip
+      - key: MODEL_URL
+        # Optional: provide a signed URL here if you do not commit the model to the repo
+        value: ""
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+    # Optional instance settings
+    # instanceType: starter-1 (uncomment to set specific instance)
+
+# If you need background workers, cron jobs, or static sites add them below.
+# Example:
+# cron:
+#   - name: model-maintenance
+#     schedule: "0 3 * * *"
+#     command: "python scripts/maintain_models.py"

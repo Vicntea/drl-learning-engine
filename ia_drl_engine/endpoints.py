@@ -48,12 +48,17 @@ class SessionEndRequest(BaseModel):
 
 # ============= FUNCIONES =============
 
+import torch
+
+
 def predict_with_focus(model, student_state_dict, focus_nodes=None, strict=False):
     """
     Predice el siguiente ejercicio con soporte para focus nodes
     """
     obs = state_to_observation(student_state_dict)
-    action, _ = model.predict(obs, deterministic=True)
+    # Use inference_mode to lower memory usage and ensure no grads are tracked
+    with torch.inference_mode():
+        action, _ = model.predict(obs, deterministic=True)
     
     _, idx_to_skill, _ = load_skill_mapping()
     selected_skill = idx_to_skill[int(action)]

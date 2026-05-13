@@ -119,7 +119,10 @@ def predict_with_focus(
     """
     try:
         obs = state_to_observation(student_state_dict)
-        action, _ = model.predict(obs, deterministic=True)
+        # Use torch.inference_mode to avoid grad tape and reduce memory usage
+        import torch
+        with torch.inference_mode():
+            action, _ = model.predict(obs, deterministic=True)
 
         _, idx_to_skill, _ = load_skill_mapping()
         selected_skill = idx_to_skill[int(action)]

@@ -1,19 +1,10 @@
 # drl_inference.py
-from stable_baselines3 import PPO
+from ia_drl_engine.src.agents.load_agent import get_model
 import numpy as np
 from ia_drl_engine.state_model import UserState
 from ia_drl_engine.exercise_schema import Exercise
 from ia_drl_engine.src.generators.nodes import node_1a  # Import all node modules as needed
-
-# --- Singleton Model Loader ---
-class DRLModelSingleton:
-    _model = None
-
-    @classmethod
-    def get_model(cls, model_path="models/ppo_music_learning.zip"):
-        if cls._model is None:
-            cls._model = PPO.load(model_path)
-        return cls._model
+import torch
 
 # --- Exercise Catalog Loader ---
 def load_exercise_catalog():
@@ -50,10 +41,12 @@ def state_to_vector(state: UserState) -> np.ndarray:
 
 # --- Inference Function ---
 def get_next_exercise(state: UserState) -> Exercise:
-    model = DRLModelSingleton.get_model()
+    model = get_model()
     obs = state_to_vector(state)
-    action, _ = model.predict(obs, deterministic=True)
-    exercise = EXERCISE_CATALOG[action]
+    # Use inference_mode to reduce memory and avoid grad tracking
+    with torch.inference_mode():
+        action, _ = model.predict(obs, deterministic=True)
+    exercise = EXERCISE_CATALOG[int(action)]
     return exercise
 
 # --- Optional: Update User State ---

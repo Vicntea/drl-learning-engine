@@ -31,3 +31,10 @@ def root():
 # =========================================
 
 setup_endpoints(app)
+
+
+@app.get("/health")
+def health():
+    """Basic health check. Returns model_loaded flag (doesn't load model)."""
+    from ia_drl_engine.src.agents.load_agent import is_model_loaded
+    return {"status": "ok", "model_loaded": is_model_loaded(), "model_path_env": "MODEL_PATH"}
