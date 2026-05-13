@@ -23,7 +23,16 @@ COPY requirements.txt /app/requirements.txt
 # Pin a CPU-only torch wheel that exists on the PyTorch CPU index.
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir torch==2.2.2+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html && \
-    pip install --no-cache-dir -r /app/requirements.txt
+    # Create a cleaned requirements file removing local file:// paths, editable/git lines
+    # and absolute local filesystem paths (e.g. /home/... or C:\...) which cannot be installed inside the container
+    sed '/file:\/\//d' /app/requirements.txt | \
+    sed '/^\s*-e/d' | \
+    sed '/^\s*git\+/d' | \
+    sed '/^\s*#/d' | \
+    sed '/^\s*$/d' | \
+    sed '/^\//d' | \
+    sed '/^[A-Za-z]\:\\\/\//d' > /app/requirements_clean.txt && \
+    pip install --no-cache-dir -r /app/requirements_clean.txt
 
 # Copy application code
 COPY . /app
