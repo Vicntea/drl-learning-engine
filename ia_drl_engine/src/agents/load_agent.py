@@ -4,6 +4,8 @@ import logging
 import os
 import threading
 import torch
+import sys
+import types
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,23 @@ def get_model():
                 torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "1")))
             except Exception:
                 pass
+            # Workaround: some models serialized with older numpy builds refer to
+            # module paths like "numpy._core.numeric" which don't exist on newer
+            # numpy distributions. cloudpickle will try to import that name when
+            # deserializing. Provide a runtime shim so imports succeed.
+            try:
+                import numpy._core.numeric  # noqa: F401 - prefer real module when present
+            except Exception:
+                try:
+                    import numpy.core.numeric as _numeric
+                    shim = types.ModuleType("numpy._core.numeric")
+                    shim.__dict__.update(_numeric.__dict__)
+                    sys.modules["numpy._core.numeric"] = shim
+                    logger.debug("Inserted shim module for numpy._core.numeric to support legacy pickles")
+                except Exception as _shim_exc:
+                    # If creating the shim fails, continue and surface the original
+                    # error when loading the model so the caller can troubleshoot.
+                    logger.debug(f"Failed to install numpy._core.numeric shim: {_shim_exc}")
             # stable-baselines3 supports device argument; ensure CPU
             _model = PPO.load(model_path_str, device="cpu")
             logger.info("Model loaded successfully (device=cpu)")
