@@ -16,11 +16,8 @@ COPY requirements.txt .
 
 RUN pip install --upgrade pip setuptools wheel
 
-# PyTorch CPU
 RUN pip install --no-cache-dir \
     torch==2.2.2+cpu \
-    torchvision==0.17.2+cpu \
-    torchaudio==2.2.2+cpu \
     -f https://download.pytorch.org/whl/cpu/torch_stable.html
 
 RUN pip install --no-cache-dir -r requirements.txt
