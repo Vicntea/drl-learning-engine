@@ -20,9 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/requirements.txt
 
 # Install CPU-only torch wheel and pip deps
-# Pin a CPU-only torch compatible with stable-baselines3
+# Pin a CPU-only torch wheel that exists on the PyTorch CPU index.
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir torch==2.2.5+cpu torchvision==0.17.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html && \
+    pip install --no-cache-dir torch==2.2.2+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html && \
     pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy application code
