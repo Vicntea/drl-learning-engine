@@ -1,7 +1,8 @@
 # 🎵 Tesis Musical con Deep Reinforcement Learning  
 ### *Modelo de IA para enseñanza musical personalizada*
-
+### uvicorn main:app --reload --port 8000
 ---
+
 
 ## 🧠 Descripción del Proyecto
 

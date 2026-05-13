@@ -3,3 +3,8 @@ ia-drl-engine/data/synthetic/learning_progress/*
 ia-drl-engine/data/synthetic/synthetic_data.jsonl
 
 node_modules/
+
+# Ignorar la carpeta generada automáticamente por setuptools
+drl_learning_engine.egg-info/
+
+ia_drl_engine/data/synthetic/synthetic_data.jsonl
